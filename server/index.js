@@ -6,6 +6,7 @@ import rateLimit from "express-rate-limit";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
+import multer from "multer";
 import { createSessionMiddleware } from "./auth/session.js";
 import { isDevLoginEnabled, registerDevAuthRoutes } from "./auth/dev.js";
 import { isMicrosoftSsoConfigured, registerMicrosoftAuthRoutes } from "./auth/microsoft.js";
@@ -80,7 +81,7 @@ const HOD_ROLE_ID = 3;
 const APPROVAL_ROLE_ID = 4;
 const BULK_STAFF_MAX = 500;
 /** Bump when API surface changes — exposed on /api/ping for deploy checks */
-const API_BUILD = 13;
+const API_BUILD = 14;
 
 function dashboardPathForRole(roleId) {
   switch (roleId) {
@@ -172,6 +173,7 @@ apiRouter.get("/ping", (_req, res) => {
       staffCrud: true,
       staffBulk: true,
       requisitions: true,
+      carouselContent: true,
       microsoftSso: isMicrosoftSsoConfigured(),
       devLogin: isDevLoginEnabled(),
     },
@@ -539,6 +541,141 @@ apiRouter.get("/health", generalLimiter, async (_req, res) => {
     res.status(503).json({ ok: false, db: false, error: mapLoginDbError(err).error });
   }
 });
+
+// ─────────────────────────────────────────────
+// CAROUSEL CONTENT ROUTES
+// ─────────────────────────────────────────────
+
+const carouselUploadsDir = path.join(__dirname, "..", "uploads", "carousel");
+fs.mkdirSync(carouselUploadsDir, { recursive: true });
+
+const carouselStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, carouselUploadsDir),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, `carousel-${Date.now()}${ext}`);
+  },
+});
+
+const carouselUpload = multer({
+  storage: carouselStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (/^image\/(jpeg|png|webp|gif)$/.test(file.mimetype)) cb(null, true);
+    else cb(new Error("Only image files are allowed."));
+  },
+});
+
+function requireAdmin(req, res, next) {
+  if (!req.session?.user?.staffId) return res.status(401).json({ error: "Not signed in." });
+  if (req.session.user.roleId !== 2) return res.status(403).json({ error: "Admin only." });
+  next();
+}
+
+// Public: list all carousel items
+apiRouter.get("/carousel", generalLimiter, async (_req, res) => {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT id, title, description,
+              DATE_FORMAT(date_from, '%Y-%m-%d') AS date_from,
+              DATE_FORMAT(date_to,   '%Y-%m-%d') AS date_to,
+              category, picture_path, created_at
+       FROM carousel_content
+       ORDER BY created_at DESC`,
+    );
+    return res.json({ items: rows });
+  } catch (err) {
+    console.error("Carousel list error:", err);
+    return res.status(500).json({ error: "Failed to load carousel content." });
+  }
+});
+
+// Admin: create carousel item
+apiRouter.post("/admin/carousel", requireAdmin, generalLimiter, carouselUpload.single("picture"), async (req, res) => {
+  const title = String(req.body?.title ?? "").trim();
+  const description = String(req.body?.description ?? "").trim();
+  const dateFrom = String(req.body?.date_from ?? "").trim();
+  const dateTo = String(req.body?.date_to ?? "").trim();
+  const category = String(req.body?.category ?? "").trim();
+  const picturePath = req.file ? `uploads/carousel/${req.file.filename}` : null;
+
+  if (!title || !description || !dateFrom || !dateTo || !category) {
+    return res.status(400).json({ error: "title, description, date_from, date_to and category are required." });
+  }
+
+  try {
+    const [result] = await pool.execute(
+      `INSERT INTO carousel_content (title, description, date_from, date_to, category, picture_path, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [title, description, dateFrom, dateTo, category, picturePath, req.session.user.staffId],
+    );
+    return res.status(201).json({ id: result.insertId, message: "Carousel item created." });
+  } catch (err) {
+    console.error("Carousel create error:", err);
+    return res.status(500).json({ error: "Failed to create carousel item." });
+  }
+});
+
+// Admin: update carousel item
+apiRouter.patch("/admin/carousel/:id", requireAdmin, generalLimiter, carouselUpload.single("picture"), async (req, res) => {
+  const id = parsePositiveInt(req.params.id);
+  if (!id) return res.status(400).json({ error: "Invalid carousel item ID." });
+
+  const sets = [];
+  const params = [];
+
+  if (req.body?.title !== undefined) { sets.push("title = ?"); params.push(String(req.body.title).trim()); }
+  if (req.body?.description !== undefined) { sets.push("description = ?"); params.push(String(req.body.description).trim()); }
+  if (req.body?.date_from !== undefined) { sets.push("date_from = ?"); params.push(String(req.body.date_from).trim()); }
+  if (req.body?.date_to !== undefined) { sets.push("date_to = ?"); params.push(String(req.body.date_to).trim()); }
+  if (req.body?.category !== undefined) { sets.push("category = ?"); params.push(String(req.body.category).trim()); }
+  if (req.file) { sets.push("picture_path = ?"); params.push(`uploads/carousel/${req.file.filename}`); }
+
+  if (sets.length === 0) return res.status(400).json({ error: "Provide at least one field to update." });
+
+  params.push(id);
+
+  try {
+    const [result] = await pool.execute(
+      `UPDATE carousel_content SET ${sets.join(", ")} WHERE id = ?`,
+      params,
+    );
+    if (result.affectedRows === 0) return res.status(404).json({ error: "Carousel item not found." });
+    return res.json({ message: "Carousel item updated." });
+  } catch (err) {
+    console.error("Carousel update error:", err);
+    return res.status(500).json({ error: "Failed to update carousel item." });
+  }
+});
+
+// Admin: delete carousel item
+apiRouter.delete("/admin/carousel/:id", requireAdmin, generalLimiter, async (req, res) => {
+  const id = parsePositiveInt(req.params.id);
+  if (!id) return res.status(400).json({ error: "Invalid carousel item ID." });
+
+  try {
+    const [rows] = await pool.execute("SELECT picture_path FROM carousel_content WHERE id = ?", [id]);
+    if (rows.length === 0) return res.status(404).json({ error: "Carousel item not found." });
+
+    const [result] = await pool.execute("DELETE FROM carousel_content WHERE id = ?", [id]);
+    if (result.affectedRows === 0) return res.status(404).json({ error: "Carousel item not found." });
+
+    // Clean up uploaded image file
+    const picturePath = rows[0].picture_path;
+    if (picturePath) {
+      const fullPath = path.join(__dirname, "..", picturePath);
+      fs.unlink(fullPath, () => {});
+    }
+
+    return res.json({ message: "Carousel item deleted." });
+  } catch (err) {
+    console.error("Carousel delete error:", err);
+    return res.status(500).json({ error: "Failed to delete carousel item." });
+  }
+});
+
+// Serve carousel uploaded images
+app.use("/uploads/carousel", express.static(carouselUploadsDir));
 
 apiRouter.use((req, res) => {
   res.status(404).json({

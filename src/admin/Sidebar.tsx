@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { NavLink } from "react-router-dom";
-import { Banknote, BarChart3, ClipboardCheck, History, LayoutDashboard, LogOut, Menu, Settings, Users } from "lucide-react";
+import { Banknote, BarChart3, ClipboardCheck, History, Images, LayoutDashboard, LogOut, Menu, Settings, Users } from "lucide-react";
 
 import { SidebarPendingCount } from "@/components/cpd/SidebarPendingCount";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,10 @@ const menuItems = [
   { to: "/admin/settings", label: "Settings", icon: Settings },
 ] as const;
 
-const userItems = [{ to: "/admin/users", label: "User", icon: Users }] as const;
+const userItems = [
+  { to: "/admin/users", label: "User", icon: Users },
+  { to: "/admin/carousel", label: "Carousel", icon: Images },
+] as const;
 
 function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
   const handleLogout = useLogout();

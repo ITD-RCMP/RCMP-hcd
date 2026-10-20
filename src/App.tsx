@@ -25,6 +25,7 @@ import { AdminSettingsPage } from "./admin/Settings.tsx";
 import { AdminUsersPage } from "./admin/Users.tsx";
 import { AdminBulkUsersPage } from "./admin/BulkUsers.tsx";
 import { AdminVerifyRequisitionPage } from "./admin/ReviewReq.tsx";
+import { AdminCarouselContentPage } from "./admin/CarouselContent.tsx";
 import { HODDashboardPage } from "./HOD/Dashboard.tsx";
 import { HODCalendarPage } from "./HOD/calendar.tsx";
 import { HODHistoryPage } from "./HOD/History.tsx";
@@ -75,6 +76,7 @@ const App = () => (
             <Route path="/admin/settings" element={<AdminSettingsPage />} />
             <Route path="/admin/users" element={<AdminUsersPage />} />
             <Route path="/admin/users/bulk" element={<AdminBulkUsersPage />} />
+            <Route path="/admin/carousel" element={<AdminCarouselContentPage />} />
           </Route>
 
           <Route element={<ProtectedRoute roles={[ROLE.HOD]} />}>
