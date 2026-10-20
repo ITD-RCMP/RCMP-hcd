@@ -15,7 +15,7 @@ export default defineConfig(({ mode }) => ({
     // remove this when production ready
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:3001",
+        target: "http://127.0.0.1:3002",
         changeOrigin: true,
       },
     },

@@ -603,7 +603,7 @@ const server = app.listen(port, host, () => {
 server.on("error", (err) => {
   if (err?.code === "EADDRINUSE") {
     console.error(`Port ${port} is already in use. Stop the old Node process, then run npm run server again.`);
-    console.error("Windows: netstat -ano | findstr :3001  then  taskkill /PID <pid> /F");
+    console.error(`macOS/Linux: lsof -i :${port} then kill <pid>`);
   } else {
     console.error("Server error:", err);
   }
